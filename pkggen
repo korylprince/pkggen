@@ -1,0 +1,155 @@
+#!/usr/bin/env python
+from __future__ import print_function
+import os, sys
+import argparse
+import subprocess
+import uuid
+
+parser = argparse.ArgumentParser(description='An OS X pkg generator')
+
+parser.add_argument('files_list', action='store', help='path to file containing a list of files to be included separated by newlines')
+parser.add_argument('output', action='store', help='filename of output pkg')
+parser.add_argument('-i','--identifier', action='store', dest='identifier', required=True, help='identifier set for the pkg')
+parser.add_argument('-v','--version', action='store', dest='version', help='version for for the pkg. (will be 0 if not given)')
+parser.add_argument('--preinstall', action='store', metavar='script_path', help='path to preinstall script')
+parser.add_argument('--postinstall', action='store', metavar='script_path', help='path to postinstall script')
+parser.add_argument('--warn-only', action='store_true', help='only warn when encountering an error if possible')
+
+args = parser.parse_args()
+
+try:
+    with open(args.files_list) as f:
+        filelist = f.read().splitlines()
+except OSError as e:
+    print('Error accessing '+args.files_list+': '+e.strerror,file=sys.stderr)
+    sys.exit(1)
+except IOError as e:
+    print('Error accessing '+args.files_list+': '+e.strerror,file=sys.stderr)
+    sys.exit(1)
+
+def addFile(f,files,dirs):
+    path = os.path.normpath(f)
+    files.add(path)
+    while path != '/':
+        path = os.path.split(path)[0]
+        dirs.add(path)
+
+def addRecursive(f,files,dirs):
+    path = os.path.normpath(f)
+    dirs.add(path)
+    try:
+        for x in os.listdir(path):
+            x = os.path.join(path,x)
+            if os.path.isfile(x):
+                addFile(x,files,dirs)
+            elif os.path.isdir(x):
+                addRecursive(x,files,dirs)
+    except OSError as e:
+        print('Error accessing '+path+': '+e.strerror,file=sys.stderr)
+        if not args.warn_only:
+            sys.exit(1)
+
+files = set() 
+dirs = set()
+
+for f in filelist:
+    f = f.strip()
+    if f.startswith('#') or f == '':
+        continue
+    elif os.path.isfile(f):
+        addFile(f,files,dirs)
+    elif os.path.isdir(f):
+        addRecursive(f,files,dirs)
+    else:
+        print('Error accessing '+f+': Does not exist',file=sys.stderr)
+        if not args.warn_only:
+            sys.exit(1)
+
+
+def get_checksum(f):
+    return subprocess.check_output(['cksum',f]).decode('UTF-8').split(' ')[0]
+
+dirs = sorted(dirs)
+files = sorted(files)
+
+tempdir = '/tmp/'+uuid.uuid4().hex
+os.system('mkdir '+tempdir)
+os.system('mkdir '+tempdir+'/pkg')
+
+def exit(good=1):
+    os.system('rm -Rf '+tempdir)
+    sys.exit(good)
+
+
+with open(tempdir+'/bomstr','w') as bomstr:
+    with open(tempdir+'/filelist','w') as filelist:
+
+        for d in dirs:
+            stat = os.stat(d)
+            if d == '/':
+                d = ''
+            print('.{0}\t4{1}\t{2}/{3}'.format(d,str(oct(stat.st_mode))[2:],stat.st_uid,stat.st_gid),file=bomstr)
+            print(d,file=filelist)
+
+        for f in files:
+            stat = os.stat(f)
+            print('.{0}\t1{1}\t{2}/{3}\t{4}\t{5}'.format(f,str(oct(stat.st_mode))[2:],stat.st_uid,stat.st_gid,stat.st_size,get_checksum(f)),file=bomstr)
+            print(f,file=filelist)
+
+
+if os.system('mkbom -i {0}/bomstr {0}/pkg/Bom'.format(tempdir)) != 0:
+    print('Error creating Bom',file=sys.stderr)
+    exit()
+
+if os.system('cpio --quiet -z -o < {0}/filelist > {0}/pkg/Payload'.format(tempdir)) != 0:
+    print('Error creating Payload.cpio',file=sys.stderr)
+    exit()
+
+if args.preinstall and args.postinstall:
+    os.system('mkdir {0}/pkg/Scripts'.format(tempdir))
+    if not os.system('cp {0} {1}/pkg/Scripts/preinstall'.format(args.preinstall,tempdir)) == 0:
+        print('Error creating preinstall',file=sys.stderr)
+        exit()
+    if not os.system('cp {0} {1}/pkg/Scripts/postinstall'.format(args.postinstall,tempdir)) == 0:
+        print('Error creating postinstall',file=sys.stderr)
+        exit()
+    os.system('chmod -R +x {0}/pkg/Scripts'.format(tempdir))
+    scripts = """<scripts>
+        <preinstall file="./preinstall"/>
+        <postinstall file="./postinstall"/>
+    </scripts>
+"""
+elif args.preinstall:
+    os.system('mkdir {0}/pkg/Scripts'.format(tempdir))
+    if not os.system('cp {0} {1}/pkg/Scripts/preinstall'.format(args.preinstall,tempdir)) == 0:
+        print('Error creating preinstall',file=sys.stderr)
+        exit()
+    os.system('chmod -R +x {0}/pkg/Scripts'.format(tempdir))
+    scripts = """<scripts>
+        <preinstall file="./preinstall"/>
+    </scripts>
+"""
+elif args.postinstall:
+    if not os.system('cp {0} {1}/pkg/Scripts/postinstall'.format(args.postinstall,tempdir)) == 0:
+        print('Error creating postinstall',file=sys.stderr)
+        exit()
+    os.system('chmod -R +x {0}/pkg/Scripts'.format(tempdir))
+    scripts = """<scripts>
+        <postinstall file="./postinstall"/>
+    </scripts>
+"""
+else:
+    scripts = ""
+
+pkginfo = """
+<pkg-info format-version="2" identifier="{identifier}" version="{version}" install-location="/" auth="root">
+    <payload/>
+    {scripts}
+</pkg-info>
+""".format(identifier=args.identifier,version=args.version or '0.0',scripts=scripts)
+with open(tempdir+'/pkg/PackageInfo','w') as f:
+    f.write(pkginfo)
+
+os.system('pkgutil --flatten {0}/pkg {1}'.format(tempdir,args.output))
+
+exit(0)

@@ -130,6 +130,7 @@ elif args.preinstall:
     </scripts>
 """
 elif args.postinstall:
+    os.system('mkdir {0}/pkg/Scripts'.format(tempdir))
     if not os.system('cp {0} {1}/pkg/Scripts/postinstall'.format(args.postinstall,tempdir)) == 0:
         print('Error creating postinstall',file=sys.stderr)
         exit()

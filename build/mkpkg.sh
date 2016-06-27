@@ -1,9 +1,9 @@
 #!/bin/bash
-ver="1.0"
+ver="1.1"
 
-sudo cp ../pkggen /usr/bin/
+sudo cp ../pkggen /usr/local/bin/
 
-sudo chown root:wheel /usr/bin/pkggen
+sudo chown root:wheel /usr/local/bin/pkggen
 
 sudo ../pkggen -i tk.unstac.pkggen -v "$ver" files out.pkg
 sudo chown administrator:staff out.pkg

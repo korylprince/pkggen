@@ -1,3 +1,8 @@
+# Deprecation Notice
+
+[munki-pkg](https://github.com/munki/munki-pkg) is a much better tool. Use it instead.
+
+
 pkggen
 <https://github.com/korylprince/pkggen>
 
